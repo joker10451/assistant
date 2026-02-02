@@ -5,3 +5,7 @@ backgroundColor="#1E1E1E"
 secondaryBackgroundColor="#2D2D2D"
 textColor="#FFFFFF"
 font="sans serif"
+# Добавляем недостающие поля, чтобы убрать ошибки в консоли
+widgetBackgroundColor="#2D2D2D"
+widgetBorderColor="#444444"
+skeletonBackgroundColor="#2D2D2D"

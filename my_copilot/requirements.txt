@@ -1,11 +1,10 @@
-streamlit==1.32.0
+streamlit>=1.39.0
 openai
-huggingface-hub
+huggingface_hub
 python-dotenv
-requests
-pillow
-edge-tts
 faster-whisper
+edge-tts
 chromadb
 sentence-transformers
 pypdf
+python-telegram-bot
