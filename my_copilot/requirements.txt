@@ -1,6 +1,5 @@
 streamlit==1.32.0
-groq
-huggingface_hub
+google-genai
 python-dotenv
 requests
 pillow

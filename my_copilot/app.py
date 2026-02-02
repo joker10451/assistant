@@ -1,17 +1,21 @@
 import streamlit as st
-from dotenv import load_dotenv, find_dotenv
 import os
+from dotenv import load_dotenv, find_dotenv
+import google.genai as genai
+from PIL import Image
 
-# Load environment variables from current or parent directories
+# 1. Загрузка переменных
 load_dotenv(find_dotenv())
 
-# Page config
-st.set_page_config(
-    page_title="Мой Второй Пилот",
-    page_icon="🚗",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
+# --- Настройка страницы (должна быть первой командой Streamlit) ---
+st.set_page_config(page_title="Мой Второй Пилот", page_icon="🚗", layout="centered", initial_sidebar_state="collapsed")
+
+# 2. Настройка НОВОГО клиента Google AI
+try:
+    client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+except Exception as e:
+    st.error(f"Ошибка настройки ключа Google: {e}")
+    st.stop()
 
 # Custom CSS for mobile-like feel
 st.markdown("""
@@ -39,26 +43,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Navigation
-if 'page' not in st.session_state:
-    st.session_state.page = "advisor"
+st.title("🚗 Мой Второй Пилот")
 
-def navigate_to(page):
-    st.session_state.page = page
+# --- Навигация ---
+page = st.sidebar.radio("Выбери режим", ["🧠 Советчик", "👁️ Камера", "🧘 Маршрут"])
 
-# Sidebar
-with st.sidebar:
-    st.title("Меню")
-    if st.button("🧠 Умный Советчик"):
-        navigate_to("advisor")
-    if st.button("👁️ Зоркий Глаз"):
-        navigate_to("vision")
-    if st.button("🧘 Спокойный Маршрут"):
-        navigate_to("route")
-
-# Main Content
-if st.session_state.page == "advisor":
-    st.title("🧠 Умный Советчик")
+# --- БЛОК 1: Советчик ---
+if page == "🧠 Советчик":
+    st.header("Умный Советчик")
     
     # Initialize chat history
     if "messages" not in st.session_state:
@@ -68,72 +60,82 @@ if st.session_state.page == "advisor":
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-
+            
     # React to user input
-    if prompt := st.chat_input("Что случилось?"):
-        # Display user message in chat message container
+    if prompt := st.chat_input("Опиши ситуацию или задай вопрос:"):
         st.chat_message("user").markdown(prompt)
-        # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
-
-        # Display assistant response in chat message container
+        
         with st.chat_message("assistant"):
-            try:
-                from utils.ai_text import get_text_advice
-                # Prepare history for API (exclude system prompt if it's handled in get_text_advice)
-                # We pass the full history to the function
-                response = get_text_advice(prompt, st.session_state.messages[:-1])
-                st.markdown(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
-            except ImportError:
-                 st.error("Ошибка импорта AI модуля.")
-            except Exception as e:
-                 st.error(f"Ошибка: {e}")
+            with st.spinner("Думаю..."):
+                try:
+                    # Construct context
+                    history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+                    full_prompt = f"Ты — спокойный и опытный автоинструктор по имени Алекс. Твоя цель — снизить стресс. Отвечай кратко и дружелюбно.\nИстория диалога:\n{history_text}\nОтвет Алекса:"
+                    
+                    response = client.models.generate_content(
+                        model='gemini-1.5-flash',
+                        contents=full_prompt
+                    )
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                except Exception as e:
+                    st.error(f"Ошибка запроса: {e}")
 
-elif st.session_state.page == "vision":
-    st.title("👁️ Зоркий Глаз")
-    st.write("Сфотографируй приборную панель.")
-    
-    picture = st.camera_input("Сделать фото")
+# --- БЛОК 2: Камера (Зрение) ---
+elif page == "👁️ Камера":
+    st.header("Зоркий Глаз")
+    st.write("Что показывают приборы?")
+    picture = st.camera_input("Сделай фото приборной панели")
     
     if picture:
-        st.image(picture, caption="Снимок")
-        with st.spinner("Анализирую приборную панель..."):
+        st.image(picture, caption="Анализирую...", width=300)
+        with st.spinner("Смотрю..."):
             try:
-                from utils.ai_vision import analyze_dashboard
-                result = analyze_dashboard(picture)
-                if "СТОП" in result:
-                    st.error(result)
+                # Получаем байты картинки (как в примере пользователя)
+                img_data = picture.getvalue()
+                
+                # Отправляем картинку и текст ИИ
+                prompt = "Посмотри на это фото приборной панели автомобиля. Назови горящие индикаторы. Если есть красные значки — объясни опасность и дай совет. Будь краток."
+                
+                response = client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=[prompt, img_data]
+                )
+                
+                text = response.text
+                if text and ("СТОП" in text.upper() or "ОПАСНО" in text.upper()):
+                    st.error(text)
                 else:
-                    st.success(result)
-            except ImportError:
-                st.error("Ошибка импорта модуля Vision.")
+                    st.success(text)
             except Exception as e:
-                st.error(f"Ошибка: {e}")
+                st.error(f"Ошибка распознавания: {e}")
 
-elif st.session_state.page == "route":
-    st.title("🧘 Спокойный Маршрут")
-    st.write("Куда едем спокойно?")
-    
-    start = st.text_input("Откуда", placeholder="Например: Дом")
-    end = st.text_input("Куда", placeholder="Например: Работа")
+# --- БЛОК 3: Маршрут ---
+elif page == "🧘 Маршрут":
+    st.header("Спокойный путь")
+    st.write("Здесь ИИ посоветует спокойную дорогу.")
+    start = st.text_input("Откуда:", placeholder="Дом")
+    end = st.text_input("Куда:", placeholder="Работа")
     
     if st.button("Построить маршрут"):
         if start and end:
-            with st.spinner("Прокладываю самый спокойный путь..."):
+            with st.spinner("Ищу путь..."):
                 try:
-                    from utils.navigation import get_calm_route_advice
-                    advice, link = get_calm_route_advice(start, end)
+                    prompt = f"Я новичок, еду из {start} в {end}. Подскажи, через какие районы или улицы лучше проехать, чтобы избежать пробок и хаоса, или советуй избегать центры города. Пожелай удачи в конце."
+                    response = client.models.generate_content(
+                        model='gemini-1.5-flash',
+                        contents=prompt
+                    )
+                    st.markdown(response.text)
                     
-                    st.success("Маршрут готов!")
-                    st.write(advice)
-                    
-                    if link:
-                        st.link_button("🗺️ Открыть в Google Картах", link)
-                        
-                except ImportError:
-                    st.error("Ошибка импорта модуля навигации.")
+                    # Generate deep link
+                    import urllib.parse
+                    encoded_start = urllib.parse.quote(start)
+                    encoded_end = urllib.parse.quote(end)
+                    link = f"https://www.google.com/maps/dir/?api=1&origin={encoded_start}&destination={encoded_end}&travelmode=driving"
+                    st.link_button("🗺️ Открыть в Google Картах", link)
                 except Exception as e:
                     st.error(f"Ошибка: {e}")
         else:
-            st.warning("Пожалуйста, введите обе точки маршрута.")
+            st.warning("Введите точки маршрута")
