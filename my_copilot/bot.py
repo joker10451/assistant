@@ -12,6 +12,7 @@ from faster_whisper import WhisperModel
 import edge_tts
 import chromadb
 from sentence_transformers import SentenceTransformer
+from utils.tools import tools_definition, get_part_price, get_weather_advice
 
 # 1. Загрузка переменных
 load_dotenv(find_dotenv())
@@ -96,7 +97,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rag_context = "\nИНФОРМАЦИЯ ИЗ ИНСТРУКЦИИ:\n" + "\n".join(results['documents'][0])
 
         service_info = f"Последняя замена масла: {last_oil['date']} на {last_oil['mileage']} км."
-        system_prompt = f"Ты — Алекс, спокойный автоинструктор Audi. {service_info} {rag_context}\nОтвечай кратко, помогай водителю не нервничать."
+        system_prompt = (
+            f"Ты — Алекс, автономный ассистент водителя Audi A3. {service_info}\n"
+            f"У тебя есть инструменты для проверки погоды и поиска запчастей. "
+            "Если пользователь спрашивает о погоде, ценах на детали или запчастях — ОБЯЗАТЕЛЬНО используй инструменты.\n"
+            f"Информация из инструкции: {rag_context}\n"
+            "Отвечай кратко и спокойно."
+        )
         
         # Добавляем сообщение пользователя в историю
         user_histories[user_id].append({"role": "user", "content": text_prompt})
@@ -106,9 +113,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             response = client.chat.completions.create(
                 model="deepseek-chat",
-                messages=[{"role": "system", "content": system_prompt}] + user_histories[user_id]
+                messages=[{"role": "system", "content": system_prompt}] + user_histories[user_id],
+                tools=tools_definition,
+                tool_choice="auto"
             )
-            answer = response.choices[0].message.content
+            
+            msg = response.choices[0].message
+            
+            # Если ИИ решил вызвать инструмент
+            if msg.tool_calls:
+                for tool_call in msg.tool_calls:
+                    func_name = tool_call.function.name
+                    args = json.loads(tool_call.function.arguments)
+                    
+                    if func_name == "get_part_price":
+                        result = get_part_price(**args)
+                    elif func_name == "get_weather_advice":
+                        result = get_weather_advice(**args)
+                    else:
+                        result = "Инструмент не найден."
+                    
+                    # Добавляем результат в историю и просим финальный ответ
+                    user_histories[user_id].append(msg) # Сообщение с вызовом
+                    user_histories[user_id].append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": func_name,
+                        "content": result
+                    })
+                    
+                    # Финальный ответ после инструмента
+                    final_res = client.chat.completions.create(
+                        model="deepseek-chat",
+                        messages=[{"role": "system", "content": system_prompt}] + user_histories[user_id]
+                    )
+                    answer = final_res.choices[0].message.content
+            else:
+                answer = msg.content
             
             # Добавляем ответ в историю
             user_histories[user_id].append({"role": "assistant", "content": answer})
@@ -119,9 +160,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Отправка аудио (TTS)
             try:
                 audio_path = await text_to_speech(answer)
-                with open(audio_path, "rb") as audio:
-                    await update.message.reply_voice(audio)
-                os.remove(audio_path)
+                if os.path.exists(audio_path):
+                    with open(audio_path, "rb") as audio:
+                        await update.message.reply_voice(audio)
+                    # Небольшая пауза перед удалением, чтобы файл гарантированно освободился
+                    await asyncio.sleep(0.5)
+                    os.remove(audio_path)
             except Exception as tts_err:
                 logging.error(f"TTS Error: {tts_err}")
             
