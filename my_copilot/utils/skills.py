@@ -187,6 +187,22 @@ class SkillManager:
             )
         return res
 
+    @staticmethod
+    def web_search(query: str):
+        """Навык: Поиск в интернете (цены, отзывы, новости)"""
+        from duckduckgo_search import DDGS
+        try:
+            results = DDGS().text(query, max_results=3)
+            if not results:
+                return "Поиск не дал результатов."
+            
+            summary = ""
+            for r in results:
+                summary += f"• <a href='{r['href']}'>{r['title']}</a>: {r['body']}\n"
+            return summary
+        except Exception as e:
+            return f"Ошибка поиска: {e}"
+
 # Описание для ИИ
 OPENCLAW_TOOLS = [
     {
@@ -267,6 +283,20 @@ OPENCLAW_TOOLS = [
                 "properties": {
                     "situation_type": {"type": "string", "description": "Тип ситуации: 'авария' или 'поломка'"}
                 }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Найти информацию в интернете (цены на запчасти, отзывы, инструкции, если нет в базе)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Запрос для поиска (например, 'цена лобовое стекло Audi A3 8P')"}
+                },
+                "required": ["query"]
             }
         }
     }

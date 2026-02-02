@@ -320,6 +320,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         result = SkillManager.get_part_numbers(**args)
                     elif func_name == "sos_help":
                         result = SkillManager.sos_help(**args)
+                    elif func_name == "web_search":
+                        result = SkillManager.web_search(**args)
                     else:
                         result = "Навык не найден."
                     
