@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+chroma_db/
+user_data.json
+service_history.json
+*.mp3
+*.ogg
+*.jpg
+.streamlit/
+venv/
+node_modules/
