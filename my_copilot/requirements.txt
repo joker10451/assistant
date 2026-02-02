@@ -4,3 +4,5 @@ huggingface-hub
 python-dotenv
 requests
 pillow
+edge-tts
+faster-whisper
