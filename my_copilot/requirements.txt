@@ -6,3 +6,6 @@ requests
 pillow
 edge-tts
 faster-whisper
+chromadb
+sentence-transformers
+pypdf

@@ -34,18 +34,16 @@ if hf_token:
 # --- Инициализация Whisper (STT) ---
 @st.cache_resource
 def load_whisper():
-    token = os.getenv("HF_TOKEN")
+    # Удаляем токены из процесса, чтобы избежать ошибки 401 (Unauthorized)
+    if "HF_TOKEN" in os.environ:
+        del os.environ["HF_TOKEN"]
+    if "HUGGINGFACE_HUB_TOKEN" in os.environ:
+        del os.environ["HUGGINGFACE_HUB_TOKEN"]
+    
     try:
-        # Принудительно заходим под правильным токеном, чтобы сбросить "nav"
-        if token:
-            from huggingface_hub import login
-            login(token=token, overwrite=True)
-            
-        # Явно передаем токен из .env в конструктор (через ENV или параметр если доступен)
         return WhisperModel("base", device="cpu", compute_type="int8")
     except Exception as e:
-        # Если все равно ошибка, пробуем совсем без авторизации
-        st.warning(f"⚠️ Ошибка авторизации: {e}. Пробую публичный доступ...")
+        st.warning(f"⚠️ Ошибка загрузки Whisper: {e}. Пробую публичный доступ...")
         return WhisperModel("base", device="cpu", compute_type="int8", local_files_only=False)
 
 whisper_model = load_whisper()
