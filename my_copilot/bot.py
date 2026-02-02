@@ -344,19 +344,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Добавляем ответ в историю
             user_histories[user_id].append({"role": "assistant", "content": answer})
             
-            # Отправка текста с поддержкой HTML
-            await update.message.reply_text(answer, parse_mode="HTML")
-            
-            # Отправка аудио (TTS) ПРИОСТАНОВЛЕНА ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ
-            # try:
-            #     audio_path = await text_to_speech(answer)
-            #     if os.path.exists(audio_path):
-            #         with open(audio_path, "rb") as audio:
-            #             await update.message.reply_voice(audio)
-            #         await asyncio.sleep(0.5)
-            #         os.remove(audio_path)
-            # except Exception as tts_err:
-            #     logging.error(f"TTS Error: {tts_err}")
+            # Отправка текста с поддержкой HTML и фоллбэком
+            try:
+                await update.message.reply_text(answer, parse_mode="HTML")
+            except Exception as e_html:
+                logging.error(f"HTML Error: {e_html}. Sending raw text.")
+                # Если HTML сломан, отправляем как есть, но чистим теги чтобы не пугать юзера
+                clean_text = answer.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
+                await update.message.reply_text(clean_text, parse_mode=None)
             
         except Exception as e:
             await update.message.reply_text(f"Упс, ошибка связи: {e}")
