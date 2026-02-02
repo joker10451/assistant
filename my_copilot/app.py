@@ -1,9 +1,8 @@
-import streamlit as st
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 import os
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from current or parent directories
+load_dotenv(find_dotenv())
 
 # Page config
 st.set_page_config(

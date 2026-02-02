@@ -46,4 +46,7 @@ def get_text_advice(prompt, history=[]):
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"⚠️ Произошла ошибка при обращении к ИИ: {str(e)}"
+        error_msg = str(e)
+        if "403" in error_msg or "Forbidden" in error_msg:
+            return "⚠️ Ошибка 403: Доступ запрещен. Проверьте правильность GROQ_API_KEY в файле .env. Возможно, ключ недействителен."
+        return f"⚠️ Произошла ошибка при обращении к ИИ: {error_msg}"
