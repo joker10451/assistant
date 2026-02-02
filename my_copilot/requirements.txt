@@ -1,10 +1,12 @@
-streamlit>=1.39.0
+python-telegram-bot
 openai
-huggingface_hub
-python-dotenv
 faster-whisper
 edge-tts
 chromadb
 sentence-transformers
 pypdf
-python-telegram-bot
+huggingface_hub
+python-dotenv
+apscheduler
+pytz
+streamlit

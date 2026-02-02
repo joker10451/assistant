@@ -13,6 +13,8 @@ import edge_tts
 import chromadb
 from sentence_transformers import SentenceTransformer
 from utils.skills import SkillManager, OPENCLAW_TOOLS
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # 1. Загрузка переменных
 load_dotenv(find_dotenv())
@@ -45,6 +47,23 @@ def get_users():
 
 # Хранилище истории диалогов (в памяти)
 user_histories = {}
+
+# Сервер для поддержания активности (Heartbeat)
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Alex Audi CoPilot is alive and running!")
+
+    def log_message(self, format, *args):
+        return # Отключаем логирование запросов, чтобы не засорять консоль
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    logging.info(f"Запуск Heartbeat сервера на порту {port}...")
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
 
 # Подключение к ChromaDB
 db_path = os.path.join(os.path.dirname(__file__), "chroma_db")
@@ -288,4 +307,9 @@ if __name__ == "__main__":
         app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_message))
         
         print("Алекс в Телеграме запущен!")
+        
+        # Запускаем Heartbeat сервер в отдельном потоке
+        health_thread = threading.Thread(target=run_health_server, daemon=True)
+        health_thread.start()
+        
         app.run_polling()
