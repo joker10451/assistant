@@ -24,10 +24,40 @@ DEEPSEEK_KEY = os.getenv("DEEPSEEK_API_KEY")
 # 2. Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# Сервер для поддержания активности (Heartbeat) - запускаем СРАЗУ для Render
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Alex Audi CoPilot is alive and running!")
+    def log_message(self, format, *args): return
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    logging.info(f"Запуск Heartbeat сервера на порту {port}...")
+    try:
+        server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+        server.serve_forever()
+    except Exception as e:
+        logging.error(f"Ошибка сервера здоровья: {e}")
+
+# Запуск монитора активности в отдельном потоке ДО тяжелых моделей
+health_thread = threading.Thread(target=run_health_server, daemon=True)
+health_thread.start()
+
 # 3. Инициализация моделей (STT, RAG, Клиенты)
-print("Загрузка моделей...")
-whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+print("Загрузка моделей (это может занять время)...")
+whisper_model = None
+embed_model = None
+
+def load_models():
+    global whisper_model, embed_model
+    if whisper_model is None:
+        whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+    if embed_model is None:
+        embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+
 client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
 
 # 2.5 Хранилище пользователей (для проактивности)
@@ -47,23 +77,6 @@ def get_users():
 
 # Хранилище истории диалогов (в памяти)
 user_histories = {}
-
-# Сервер для поддержания активности (Heartbeat)
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b"Alex Audi CoPilot is alive and running!")
-
-    def log_message(self, format, *args):
-        return # Отключаем логирование запросов, чтобы не засорять консоль
-
-def run_health_server():
-    port = int(os.environ.get("PORT", 10000))
-    logging.info(f"Запуск Heartbeat сервера на порту {port}...")
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
 
 # Подключение к ChromaDB
 db_path = os.path.join(os.path.dirname(__file__), "chroma_db")
@@ -137,15 +150,54 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             description = hf_client.image_to_text(img_bytes, model="Salesforce/blip-image-captioning-large")
             text_desc = description[0]["generated_text"] if isinstance(description, list) else description
             
-            # Передаем описание Алексу, чтобы он понял, что на фото
-            system_prompt = "Ты — Алекс. Тебе прислали фото документа. Описание фото: " + text_desc + ". Если это похоже на заказ-наряд или чек, выдели важную информацию (что чинили, какой пробег). Если нет — просто скажи, что видишь."
-            
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": "Что на этом фото?"}]
+            # Передаем описание Алексу, чтобы он понял контекст
+            system_analysis_prompt = (
+                "Ты — Алекс, эксперт по Audi A3. Тебе прислали описание фотографии. "
+                "Твое описание: " + text_desc + ". "
+                "Определи, это: 1) Фото чека/заказ-наряда, 2) Фото приборной панели с ошибкой, 3) Что-то другое. "
+                "Если это ПРИБОРНАЯ ПАНЕЛЬ, назови ТОЧНОЕ НАЗВАНИЕ значка (например, 'check engine', 'oil pressure', 'brake pads'). "
+                "Если это ЧЕК, выдели работы и пробег. Ответь в формате JSON: {'type': 'dashboard'|'document'|'other', 'search_query': 'что искать в мануале', 'summary': 'кратко что видишь'}."
             )
-            answer = response.choices[0].message.content
-            await update.message.reply_text(f"📝 Мой анализ:\n{answer}")
+            
+            analysis_response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "system", "content": system_analysis_prompt}],
+                response_format={'type': 'json_object'}
+            )
+            analysis = json.loads(analysis_response.choices[0].message.content)
+            
+            if analysis['type'] == 'dashboard' and analysis['search_query']:
+                await update.message.reply_text(f"🔍 Вижу значок: <b>{analysis['search_query']}</b>. Сверяюсь с инструкцией Audi...")
+                
+                # RAG по мануалу
+                if collection:
+                    res_manual = collection.query(
+                        query_embeddings=[embed_model.encode(analysis['search_query']).tolist()],
+                        n_results=2
+                    )
+                else:
+                    res_manual = {'documents': [[]]}
+                
+                manual_context = ""
+                if res_manual['documents'] and res_manual['documents'][0]:
+                    manual_context = "\nИНСТРУКЦИЯ ГОВОРИТ:\n" + "\n".join(res_manual['documents'][0])
+                
+                final_prompt = (
+                    f"На фото приборной панели замечен значок: {analysis['search_query']}.\n"
+                    f"Контекст из инструкции: {manual_context}\n"
+                    "Дай четкий план действий водителю на основе этой информации. Используй HTML."
+                )
+                
+                final_res = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "system", "content": "Ты — Алекс, диагностический ассистент Audi. Используй ТОЛЬКО HTML."}, {"role": "user", "content": final_prompt}]
+                )
+                await update.message.reply_text(final_res.choices[0].message.content, parse_mode="HTML")
+            
+            elif analysis['type'] == 'document':
+                await update.message.reply_text(f"📝 <b>Анализ документа:</b>\n{analysis['summary']}\n\nХочешь, чтобы я внес это в журнал обслуживания?", parse_mode="HTML")
+            else:
+                await update.message.reply_text(f"📸 На фото: {analysis['summary']}")
             
         except Exception as e:
             await update.message.reply_text(f"Не удалось распознать фото: {e}")
@@ -200,12 +252,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         service_info = f"Последняя замена масла: {last_oil['date']} на {last_oil['mileage']} км."
         system_prompt = (
-            f"Ты — Алекс, автономный ассистент водителя Audi A3. {service_info}\n"
-            "У тебя есть доступ к инструкции и К ИСТОРИИ ОБСЛУЖИВАНИЯ этой машины.\n"
-            "Твоя задача — находить связи между прошлыми событиями и текущими жалобами (диагностика).\n"
+            f"Ты — Алекс, лаконичный и умный штурман Audi A3. {service_info}\n"
+            "Твоя цель: давать МАКСИМАЛЬНО емкие и технически точные советы. "
+            "Пиши только по делу, исключи 'воду' и лишние приветствия.\n\n"
+            "<b>Формат ответа:</b>\n"
+            "• Суть проблемы/ответа (выделяй <b>ключевые данные</b>).\n"
+            "• Краткий план действий (1-2-3).\n"
+            "• Короткий проактивный вопрос или совет в конце.\n\n"
             f"Контекст: {combined_context}\n"
-            "ВАЖНО: Для выделения текста используй ТОЛЬКО HTML-теги (например, <b>жирный</b>, <i>курсив</i>). "
-            "НЕ используй Markdown (звездочки). Отвечай кратко, профессионально и спокойно."
+            "<b>ВАЖНО:</b> Используй ТОЛЬКО HTML (<b>, <code>). НЕ используй звездочки. "
+            "Будь краток, как в мессенджере. Весь текст должен умещаться на одном экране телефона."
         )
         
         # Добавляем сообщение пользователя в историю
@@ -246,8 +302,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
                     elif func_name == "remove_last_event":
                         result = SkillManager.remove_last_event()
-                        # В идеале тут нужно удаление из ChromaDB, но пока ограничимся JSON
-                        # чтобы не усложнять логику ID.
+                    elif func_name == "get_part_numbers":
+                        result = SkillManager.get_part_numbers(**args)
+                    elif func_name == "sos_help":
+                        result = SkillManager.sos_help(**args)
                     else:
                         result = "Навык не найден."
                     
@@ -308,8 +366,7 @@ if __name__ == "__main__":
         
         print("Алекс в Телеграме запущен!")
         
-        # Запускаем Heartbeat сервер в отдельном потоке
-        health_thread = threading.Thread(target=run_health_server, daemon=True)
-        health_thread.start()
+        # Ленивая загрузка моделей перед запуском бота
+        load_models()
         
         app.run_polling()
