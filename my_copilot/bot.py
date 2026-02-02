@@ -8,10 +8,10 @@ from dotenv import load_dotenv, find_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from openai import OpenAI
-from faster_whisper import WhisperModel
-import edge_tts
-import chromadb
-from sentence_transformers import SentenceTransformer
+# from faster_whisper import WhisperModel # Moved to lazy import
+# import edge_tts # Moved to lazy import
+# import chromadb # Moved to lazy import
+# from sentence_transformers import SentenceTransformer # Moved to lazy import
 from utils.skills import SkillManager, OPENCLAW_TOOLS
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -53,10 +53,16 @@ embed_model = None
 
 def load_models():
     global whisper_model, embed_model
+    from faster_whisper import WhisperModel
+    from sentence_transformers import SentenceTransformer
+    
     if whisper_model is None:
         whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
     if embed_model is None:
         embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+    
+    # Init ChromaDB
+    init_chroma()
 
 client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
 
@@ -78,19 +84,26 @@ def get_users():
 # Хранилище истории диалогов (в памяти)
 user_histories = {}
 
-# Подключение к ChromaDB
-db_path = os.path.join(os.path.dirname(__file__), "chroma_db")
-db_client = chromadb.PersistentClient(path=db_path)
-try:
-    collection = db_client.get_collection(name="audi_manual")
-except:
-    collection = None
+# Подключение к ChromaDB (Lazy)
+db_client = None
+collection = None
+user_history_col = None
 
-# 3.5 Личная история в ChromaDB
-try:
-    user_history_col = db_client.get_or_create_collection(name="user_history")
-except:
-    user_history_col = None
+def init_chroma():
+    global db_client, collection, user_history_col
+    import chromadb
+    db_path = os.path.join(os.path.dirname(__file__), "chroma_db")
+    db_client = chromadb.PersistentClient(path=db_path)
+    try:
+        collection = db_client.get_collection(name="audi_manual")
+    except:
+        collection = None
+    try:
+        user_history_col = db_client.get_or_create_collection(name="user_history")
+    except:
+        user_history_col = None
+
+# ChromaDB lazy init handled in init_chroma
 
 # Загрузка истории ТО
 HISTORY_FILE = "service_history.json"
@@ -101,6 +114,7 @@ def load_history():
 
 # 4. Функции
 async def text_to_speech(text):
+    import edge_tts
     communicate = edge_tts.Communicate(text, "ru-RU-SvetlanaNeural")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
         tmp_path = tmp_file.name
