@@ -10,4 +10,5 @@ python-dotenv
 apscheduler
 pytz
 streamlit
-duckduckgo-search
+duckduckgo-search>=6.0.0
+# Force UTF-8 rebuild
