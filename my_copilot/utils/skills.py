@@ -191,10 +191,18 @@ class SkillManager:
     def web_search(query: str):
         """Навык: Поиск в интернете (цены, отзывы, новости)"""
         from duckduckgo_search import DDGS
+        ddgs = DDGS()
         try:
-            results = DDGS().text(query, max_results=3)
+            # 1. Первая попытка - точный запрос
+            results = ddgs.text(query, region='ru-ru', max_results=3)
+            
+            # 2. Если пусто - упрощаем запрос (убираем последние слова)
             if not results:
-                return "Поиск не дал результатов."
+                simple_query = " ".join(query.split()[:4]) # Оставляем первые 4 слова
+                results = ddgs.text(simple_query, region='ru-ru', max_results=3)
+
+            if not results:
+                return "Поиск не дал результатов. Попробуйте переформулировать запрос."
             
             summary = ""
             for r in results:
